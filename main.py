@@ -20,7 +20,7 @@ label_map = {
     2: "Positive"
 }
 
-API_KEY = "AIzaSyAXK2mDf6SlSBtIEwUrtIfMVkWNTfQM7ZY"
+API_KEY = "AIzaSyDzkAEXeJ7zUbVIjIjf4tBfebGGTt-_RgE"
 client = genai.Client(api_key=API_KEY)
 
 def predict_sentiment(text):
@@ -31,27 +31,52 @@ def predict_sentiment(text):
     return label_map[torch.argmax(outputs.logits, dim=1).item()]
 
 def generate_executive_summary(df):
-    """สรุปปัญหาเชิงลบด้วย Gemini 1.5-Flash (ประหยัดโควต้าและแม่นยำ)"""
+    # 1. ประกาศตัวแปรสถิติให้พร้อมใช้งานใน Prompt
+   # 1. คำนวณสถิติพื้นฐาน (แก้ไข NameError: total, pos, etc.)
+    total = len(df)
+    counts = df["sentiment"].value_counts()
+    pos = counts.get("Positive", 0)
+    neu = counts.get("Neutral", 0)
+    neg = counts.get("Negative", 0)
+
+    # 2. เตรียมข้อมูลสำหรับวิเคราะห์คำที่พบบ่อย (all_text)
+    # ดึงรีวิว 30 รายการแรกมาให้ AI ดูภาพรวม
+    all_samples = df["review"].astype(str).head(30).tolist()
+    all_text = "\n".join([f"- {s}" for s in all_samples])
+    
+    # 3. เตรียมข้อมูลรีวิวเชิงลบ (neg_text)
     neg_samples = df[df.sentiment == "Negative"]["review"].astype(str).head(15).tolist()
     neg_text = "\n".join([f"- {s}" for s in neg_samples])
     
-    if not neg_samples:
-        return "ภาพรวมลูกค้ามีความพึงพอใจสูงมาก ไม่พบข้อร้องเรียนที่ต้องแก้ไขเร่งด่วน"
+    if not neg_samples and not all_samples:
+        return "ไม่พบข้อมูลรีวิวสำหรับวิเคราะห์"
 
-    prompt = f"""
-    คุณเป็นนักวิเคราะห์กลยุทธ์ธุรกิจ สรุปรีวิวลูกค้าจากข้อมูลนี้:
-    - จำนวนรีวิวเชิงลบที่วิเคราะห์: {len(neg_samples)} รายการ
-    
-    รายการรีวิวเชิงลบจริงจากลูกค้า:
-    {neg_text}
-    
-    จงสรุปปัญหาสำคัญ 3 ประเด็น และแนวทางแก้ไข 1 ข้อ เป็นภาษาไทย (กระชับและเป็นมืออาชีพ)
-    """
+    # 4. สร้าง Prompt ที่รวมทุกความต้องการ
+    prompt = f"""คุณคือที่ปรึกษาด้านวิเคราะห์ข้อมูลลูกค้า โปรดสรุปรายงานจากรีวิวจำนวน {total} รายการ ดังนี้:
+
+[สถิติภาพรวมที่ตรวจพบ]
+- จำนวนรีวิวทั้งหมด: {total} รายการ
+- รีวิวเชิงบวก: {pos} รายการ
+- รีวิวเป็นกลาง: {neu} รายการ
+- รีวิวเชิงลบ: {neg} รายการ
+
+[ข้อมูลรีวิวสำหรับการวิเคราะห์]
+{all_text}
+
+---
+จงเขียนบทสรุปผู้บริหารเป็นภาษาไทย โดยเน้นหัวข้อดังนี้:
+1. สรุปภาพรวม: วิเคราะห์สัดส่วนความพึงพอใจจากตัวเลขสถิติ
+2. คำหรือประเด็นที่พบบ่อย (Common Themes): ระบุ Keyword หรือหัวข้อที่ลูกค้าพูดถึงซ้ำๆ (เช่น ราคา, บริการ, การขนส่ง)
+3. ปัญหาหลัก 3 ประเด็น: จากกลุ่มรีวิวเชิงลบที่ต้องแก้ไขเร่งด่วน
+4. คำแนะนำเชิงกลยุทธ์ 1 ข้อ: เพื่อพัฒนาธุรกิจให้ดียิ่งขึ้น
+
+(ตอบเป็นข้อๆ ให้ชัดเจน ใช้ภาษาทางการและกระชับ)
+"""
 
     try:
-        # ใช้รุ่น 1.5-flash เพื่อความเสถียรและหลีกเลี่ยงปัญหา Quota (429)
+        # ใช้รุ่น 2.0-flash เพื่อความเสถียรและหลีกเลี่ยงปัญหา Quota (429)
         response = client.models.generate_content(
-            model="gemini-1.5-flash", 
+            model="gemini-2.0-flash", 
             contents=prompt
         )
         return response.text
@@ -96,41 +121,28 @@ ttk.Button(root, text="📂 เลือกไฟล์ CSV และวิเ�
 
 # ================== SUMMARY ==================
 summary = ttk.Frame(root)
-summary.pack(fill="x", padx=20, pady=10)
+summary.pack(fill="x", padx=40, pady=10)
 
 def summary_card(parent, emoji, title, color):
     frame = ttk.Frame(parent, style="Card.TFrame")
-    lbl_emoji = tk.Label(frame, text=emoji, font=("Segoe UI Emoji", 28), bg="white")
-    lbl_emoji.pack()
-    lbl_title = tk.Label(frame, text=title, font=("Segoe UI", 12, "bold"), bg="white")
-    lbl_title.pack()
-    lbl_percent = tk.Label(frame, text="0%", font=("Segoe UI", 22, "bold"), fg=color, bg="white")
+    tk.Label(frame, text=emoji, font=("Segoe UI Emoji", 40), bg="white").pack()
+    tk.Label(frame, text=title, font=("Segoe UI", 14, "bold"), bg="white").pack()
+    lbl_percent = tk.Label(frame, text="0%", font=("Segoe UI", 30, "bold"), fg=color, bg="white")
     lbl_percent.pack()
     return frame, lbl_percent
 
-card_pos, lbl_pos = summary_card(summary, "😊", "Positive", "green")
-card_neu, lbl_neu = summary_card(summary, "😐", "Neutral", "gray")
-card_neg, lbl_neg = summary_card(summary, "😠", "Negative", "red")
+card_pos, lbl_pos = summary_card(summary, "😊", "Positive", "#2ca02c")
+card_neu, lbl_neu = summary_card(summary, "😐", "Neutral", "#7f7f7f")
+card_neg, lbl_neg = summary_card(summary, "😠", "Negative", "#d62728")
 
-card_pos.pack(side="left", expand=True, fill="x", padx=10)
-card_neu.pack(side="left", expand=True, fill="x", padx=10)
-card_neg.pack(side="left", expand=True, fill="x", padx=10)
+card_pos.pack(side="left", expand=True, fill="both", padx=15)
+card_neu.pack(side="left", expand=True, fill="both", padx=15)
+card_neg.pack(side="left", expand=True, fill="both", padx=15)
 
-# ===== Executive Summary =====
-tk.Label(
-    root,
-    text="📌 Auto Executive Summary",
-    font=("Arial", 13, "bold")
-).pack(anchor="w", padx=10)
-
-summary_text = tk.Text(
-    root,
-    height=7,
-    wrap="word",
-    bg="#f5f5f5"
-)
-summary_text.pack(fill="x", padx=10, pady=5)
-
+# Executive Summary Section (ใหญ่ขึ้นและยืดตามจอ)
+tk.Label(root, text="Auto Executive Summary (Gemini 2.0 AI Analysis)", font=("Segoe UI", 14, "bold"), bg="#f4f6f9").pack(anchor="w", padx=45, pady=(20, 5))
+summary_text = tk.Text(root, height=12, wrap="word", bg="white", font=("Tahoma", 11), padx=20, pady=20, relief="flat")
+summary_text.pack(fill="both", expand=False, padx=40, pady=10)
 
 # ================== REVIEWS ==================
 reviews_frame = ttk.Frame(root)
